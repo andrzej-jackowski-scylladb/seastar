@@ -258,6 +258,60 @@ SEASTAR_THREAD_TEST_CASE(test_metrics_family_aggregate) {
     sm::set_relabel_configs(rl1).get();
 }
 
+SEASTAR_THREAD_TEST_CASE(test_per_collection_value) {
+    namespace sm = seastar::metrics;
+    auto collect = [] {
+        auto values = seastar::metrics::impl::get_values();
+        std::map<seastar::sstring, double> result;
+        for (size_t i = 0; i < values->metadata->size(); ++i) {
+            const auto& name = (*values->metadata)[i].mf.name;
+            if (name.starts_with("per_collection_")) {
+                result[name] = values->values[i][0].d();
+            }
+        }
+        return result;
+    };
+
+    int computations = 0;
+    bool fail = false;
+    sm::per_collection_value value([&] {
+        if (fail) {
+            throw std::runtime_error("injected failure");
+        }
+        return ++computations;
+    });
+    int disabled_computations = 0;
+    sm::per_collection_value disabled_value([&] { return ++disabled_computations; });
+    sm::metric_groups app_metrics;
+    app_metrics.add_group("per_collection", {
+        sm::make_gauge("first", sm::description("first"), [&] { return value.get(); }),
+        sm::make_gauge("second", sm::description("second"), [&] { return value.get(); }),
+        sm::make_gauge("disabled", sm::description("disabled"), [&] { return disabled_value.get(); })(sm::metric_disabled),
+    });
+
+    auto values = collect();
+    BOOST_CHECK_EQUAL(computations, 1);
+    BOOST_CHECK_EQUAL(values["per_collection_first"], 1);
+    BOOST_CHECK_EQUAL(values["per_collection_second"], 1);
+    values = collect();
+    BOOST_CHECK_EQUAL(computations, 2);
+    BOOST_CHECK_EQUAL(values["per_collection_first"], 2);
+    BOOST_CHECK_EQUAL(values["per_collection_second"], 2);
+    BOOST_CHECK_EQUAL(disabled_computations, 0);
+
+    BOOST_CHECK_EQUAL(value.get(), 3);
+    BOOST_CHECK_EQUAL(value.get(), 4);
+
+    fail = true;
+    BOOST_CHECK_THROW(collect(), std::runtime_error);
+    fail = false;
+    BOOST_CHECK_EQUAL(value.get(), 5);
+    BOOST_CHECK_EQUAL(value.get(), 6);
+    values = collect();
+    BOOST_CHECK_EQUAL(values["per_collection_first"], 7);
+    BOOST_CHECK_EQUAL(values["per_collection_second"], 7);
+}
+
 SEASTAR_THREAD_TEST_CASE(test_relabel_drop_label_prevent_runtime_conflicts) {
     using namespace seastar::metrics;
     namespace sm = seastar::metrics;

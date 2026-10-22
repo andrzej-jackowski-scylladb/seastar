@@ -741,6 +741,7 @@ using seastar::metrics::metric_groups;
 using seastar::metrics::metric_relabeling_result;
 using seastar::metrics::metric_type_def;
 using seastar::metrics::native_histogram_info;
+using seastar::metrics::per_collection_value;
 using seastar::metrics::relabel_config;
 using seastar::metrics::relabel_config_action;
 using seastar::metrics::set_metric_family_configs;

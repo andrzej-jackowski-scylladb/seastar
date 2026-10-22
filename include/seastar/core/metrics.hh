@@ -26,6 +26,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <optional>
 #include <type_traits>
 #include <variant>
 #include <seastar/core/internal/fmt.hh>
@@ -33,6 +34,7 @@
 #include <seastar/core/metrics_registration.hh>
 #include <seastar/core/metrics_types.hh>
 #include <seastar/util/bool_class.hh>
+#include <seastar/util/noncopyable_function.hh>
 
 /*! \file metrics.hh
  *  \brief header for metrics creation.
@@ -438,6 +440,9 @@ public:
 
 escaped_string shard();
 
+// The id of the collection of this shard's metric values in progress, 0 if none is.
+uint64_t running_collection();
+
 template<std::invocable T>
 metric_function make_function(T val, data_type dt) {
     return [dt, val = std::move(val)] {
@@ -647,6 +652,46 @@ impl::metric_definition_impl make_total_operations(metric_name_type name,
         instance_id_type = impl::shard()) {
     return make_counter(name, std::forward<T>(val), d, labels).set_type("total_operations");
 }
+
+/*!
+ * \brief A value computed at most once per collection of the metric values.
+ *
+ * Several metrics often derive from one snapshot of some state. Wrap the function
+ * that takes the snapshot in a per_collection_value and let each of the metrics
+ * read it with get(). The first of them evaluated in a collection of this shard's
+ * metric values takes the snapshot, and the rest of that collection reuse it.
+ * Disabled metrics are not evaluated, so a snapshot none of whose metrics is
+ * enabled is not taken. An exception thrown by the function fails the collection,
+ * like one thrown by a metric function. Outside a collection, get() calls the
+ * function every time.
+ *
+ * For example:
+ *  auto status = make_lw_shared(per_collection_value([this] { return _server.get_status(); }));
+ *  _metrics.add_group("my_group", {
+ *      make_gauge("commit_index", [status] { return status->get().commit_index; }, description("commit index")),
+ *      make_gauge("apply_index", [status] { return status->get().apply_index; }, description("apply index")),
+ *  });
+ */
+template <typename T>
+class per_collection_value {
+    noncopyable_function<T()> _compute;
+    std::optional<T> _value;
+    uint64_t _collection = 0;
+public:
+    explicit per_collection_value(noncopyable_function<T()> compute) : _compute(std::move(compute)) {}
+
+    const T& get() {
+        const auto collection = impl::running_collection();
+        if (collection == 0 || collection != _collection) {
+            _value.emplace(_compute());
+            _collection = collection;
+        }
+        return *_value;
+    }
+};
+
+template <std::invocable F>
+per_collection_value(F) -> per_collection_value<std::invoke_result_t<F>>;
 
 /*! @} */
 }

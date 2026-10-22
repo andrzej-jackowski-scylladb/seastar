@@ -33,6 +33,7 @@
 #include <seastar/core/metrics_api.hh>
 #include <seastar/core/relabel_config.hh>
 #include <seastar/core/reactor.hh>
+#include <seastar/util/defer.hh>
 
 namespace seastar {
 extern seastar::logger seastar_logger;
@@ -442,7 +443,14 @@ const value_map& get_value_map() {
     return get_local_impl()->get_value_map();
 }
 
+uint64_t running_collection() {
+    return get_local_impl()->running_collection();
+}
+
 foreign_ptr<values_reference> get_values() {
+    auto local_impl = get_local_impl();
+    local_impl->start_collection();
+    auto end_collection = defer([&local_impl] () noexcept { local_impl->end_collection(); });
     shared_ptr<values_copy> res_ref = ::seastar::make_shared<values_copy>();
     auto& res = *(res_ref.get());
     auto& mv = res.values;

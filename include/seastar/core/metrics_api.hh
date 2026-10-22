@@ -441,6 +441,8 @@ class impl {
     std::vector<relabel_config> _relabel_configs;
     std::vector<metric_family_config> _metric_family_configs;
     internalized_set _internalized_labels;
+    uint64_t _collections = 0;
+    uint64_t _running_collection = 0;
 public:
     value_map& get_value_map() {
         return _value_map;
@@ -466,6 +468,18 @@ public:
     shared_ptr<metric_metadata> metadata();
 
     std::vector<std::deque<metric_function>>& functions();
+
+    void start_collection() noexcept {
+        _running_collection = ++_collections;
+    }
+
+    void end_collection() noexcept {
+        _running_collection = 0;
+    }
+
+    uint64_t running_collection() const noexcept {
+        return _running_collection;
+    }
 
     void update_metrics_if_needed();
 
